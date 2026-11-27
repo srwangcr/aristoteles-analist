@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "errantes"
+version = "0.1.0"
+description = "Deteccion de errantes en ruido de imagenes astronomicas mediante shift-and-stack"
+requires-python = ">=3.12"
+dependencies = [
+  "numpy>=2.0",
+  "scipy>=1.13",
+  "astropy>=6.1",
+  "polars>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "mypy>=1.10"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/errantes"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src/errantes", "tests", "benchmarks"]
+ignore_missing_imports = true
