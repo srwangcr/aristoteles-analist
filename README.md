@@ -152,3 +152,14 @@ Verificación incluida: recuperación de errantes con $\mathrm{SNR}_{\rm frame}=
 - El desplazamiento en Fourier asume bordes periódicos; los candidatos a menos de 2 px del borde se descartan en la validación.
 - La rejilla de velocidades es regular; una búsqueda jerárquica (gruesa → fina) reduciría el coste para $v_{\max}$ grande.
 - Perfilado actual: ~98 % del tiempo en las $M\times N$ inversas FFT. El siguiente paso natural es un kernel Rust/PyO3 con FFT planificados y acumulación en sitio, manteniendo la API de `ShiftStackEngine`.
+
+## Hoja de ruta de madurez tecnológica (TRL 4 -> TRL 9)
+
+Estado actual: **TRL 4** (motor modular en Python/NumPy/Astropy/Polars con simulador calibrado, sustracción de estrellas, *shift-and-stack* en Fourier y validación RANSAC verificados en laboratorio con $	ext{F1} = 0.87$ a $	ext{SNR}_{	ext{frame}} = 2.0$ y 100 % de rechazo de rayos cósmicos).
+
+- [x] **TRL 4 — Validación de componentes en laboratorio:** Simulador físico con PSF Gaussiana/Moffat y ruido Poisson+Gaussiano, preprocesamiento MAD + correlación de fase, *shift-and-stack* en dominio de Fourier, filtrado RANSAC/fotométrico y benchmarks reproducibles (`pytest` + `mypy` estrictos).
+- [ ] **TRL 5 — Aceleración de núcleo y soporte FITS observacional:** Portar el barrido `ShiftStackEngine.stack` a Rust (`PyO3` + `rustfft` + `rayon`) para ejecución paralela multi-núcleo, implementar búsqueda jerárquica (gruesa $ightarrow$ fina) y soportar cubos FITS reales con tiempos irregulares (`MJD-OBS`), máscaras de píxeles defectuosos y proyección WCS (`arcsec/hora`).
+- [ ] **TRL 6 — Validación con datos reales de observatorios:** Calibrar y evaluar el pipeline sobre series históricas públicas de rastreo de asteroides/transitorios (ZTF, TESS o Pan-STARRS) recuperando objetos conocidos del *Minor Planet Center* (MPC) y midiendo tasas reales de falsos positivos.
+- [ ] **TRL 7 — Piloto operacional en flujo de observación nocturna:** Desplegar el motor en servidor Linux procesando lotes nocturnos de telescopios robóticos o redes de monitoreo con generación automática de reportes astrométricos en formato estándar MPC (ADES / 80-col) y alertas en tiempo casi real.
+- [ ] **TRL 8 — Sistema calificado y empaquetado para producción:** Incorporar modelos de trayectoria acelerada/curva para NEOs cercanos (paralaje diurno y aceleración angular), observabilidad completa, tests de regresión sobre catálogos de referencia y contenedores reproducibles.
+- [ ] **TRL 9 — Operación nominal en campaña científica:** Pipeline operando de forma continua en campañas de descubrimiento, seguimiento (*follow-up*) y astrometría de objetos cercanos a la Tierra (NEOs) y transitorios débiles.

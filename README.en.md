@@ -152,3 +152,14 @@ Included verification: recovery of wanderers at $\mathrm{SNR}_{\rm frame}=2.0$ w
 - Fourier shifts assume periodic edges; candidates within 2 px of the border are discarded during validation.
 - The velocity grid is regular; a hierarchical search (coarse → fine) would reduce cost for large $v_{\max}$.
 - Current profile: ~98 % of the time is spent in the $M\times N$ inverse FFTs. The natural next step is a Rust/PyO3 kernel with planned FFTs and in-place accumulation, keeping the `ShiftStackEngine` API.
+
+## Technology Readiness Roadmap (TRL 4 -> TRL 9)
+
+Current status: **TRL 4** (modular Python/NumPy/Astropy/Polars engine with calibrated synthetic cube generator, star subtraction, Fourier shift-and-stack, and RANSAC track validation verified in lab benchmarks at $	ext{F1} = 0.87$ for $	ext{SNR}_{	ext{frame}} = 2.0$ and 100% cosmic-ray rejection).
+
+- [x] **TRL 4 — Component validation in laboratory:** Physical simulator with Gaussian/Moffat PSF and Poisson+Gaussian noise, MAD background + phase-correlation alignment, Fourier-domain shift-and-stack, RANSAC/photometric filtering, and reproducible benchmarks (`pytest` + strict `mypy`).
+- [ ] **TRL 5 — Core acceleration and observational FITS support:** Port `ShiftStackEngine.stack` to Rust (`PyO3` + `rustfft` + `rayon`) for multi-core parallel execution, add hierarchical coarse-to-fine velocity search, and ingest real multi-extension FITS cubes with irregular timestamps (`MJD-OBS`), bad-pixel masks, and WCS astrometric rates (`arcsec/hr`).
+- [ ] **TRL 6 — Validation on real survey datasets:** Benchmark the pipeline on archival survey imagery (ZTF, TESS, or Pan-STARRS), recovering known Minor Planet Center (MPC) moving objects and measuring empirical completeness and false-positive rates.
+- [ ] **TRL 7 — Operational pilot in nightly observing pipelines:** Deploy on a Linux server processing nightly batches from robotic telescopes or survey feeds, emitting standard MPC astrometric reports (ADES / 80-column) and low-latency transient alerts.
+- [ ] **TRL 8 — Flight/survey-qualified production system:** Support accelerated/curved trajectories for very close NEOs (topocentric parallax and angular acceleration), full telemetry, reference-catalog regression suites, and reproducible container builds.
+- [ ] **TRL 9 — Nominal scientific operations:** Continuous production operation in discovery, follow-up, and precision astrometry campaigns for Near-Earth Objects (NEOs) and faint transients.
