@@ -32,7 +32,7 @@ class ShiftStackEngine:
         self.backend_name = "python-numpy"
         self._rust = None
         try:
-            import errantes_py  # type: ignore[import-not-found]
+            import errantes_py
 
             self._rust = errantes_py.ShiftStackEngine(
                 cube,
