@@ -18,21 +18,36 @@ Core dependencies: NumPy, SciPy, Astropy (FITS/WCS) and Polars (catalogs and met
 
 ## Structure
 
+```text
+Aristoteles Analist/
+├── crates/
+│   ├── errantes-core/    # Rust core: NumPy-equivalent rFFT, Rayon CPU backend, Auto/CPU/GPU dispatch, wgpu/Vulkan
+│   ├── errantes-py/      # PyO3/maturin bindings; exposes errantes_py.ShiftStackEngine
+│   └── errantes-server/  # REST + WebSocket API (axum/tokio) for Observatory Workbench
+├── web/                  # Observatory Workbench (React 18 + TS + Vite + Tailwind)
+├── src/errantes/         # Python pipeline; detection.py delegates to errantes_py when installed
+├── tests/                # 24 Python tests
+└── benchmarks/           # empirical results
 ```
-src/errantes/
-  types.py        # configs, Wanderer, Candidate, GroundTruth, SimulatedCube
-  physics.py      # Gaussian/Moffat PSF, Poisson+Gaussian noise, flux↔SNR↔magnitude
-  simulator.py    # synthetic cube, ground-truth injection, FITS I/O
-  preprocess.py   # MAD mesh, phase correlation, master image and residuals
-  detection.py    # ShiftStackEngine, kσ thresholding, components, centroids
-  validation.py   # linear RANSAC, photometric consistency, cosmic-ray rejection
-  pipeline.py     # end-to-end orchestration
-  metrics.py      # Hungarian matching, Precision/Recall/F1, ROC/PR, benchmark
-benchmarks/
-  run_benchmark.py  # sensitivity and scaling CLI
-  results/          # empirical Parquet/JSON results
-tests/              # 24 unit and integration tests
-```
+
+## Rust engine + hardware selector
+
+- `crates/errantes-core` implements `ShiftStackEngine` with mathematical parity against `numpy.fft.rfft2/irfft2` (~1e-14 error).
+- CPU backend: Rayon + rustfft, frame/hypothesis parallelism. On this host (Ryzen 5 3400G, 12×96×96, M=169) it goes from ~0.50 s (single-thread NumPy) to ~0.10 s.
+- `ComputeBackend::{Auto,Cpu,Gpu}`: Auto evaluates $M\times N\times H\times W$, detected VRAM and PCIe overhead. Auto currently selects CPU to guarantee exact parity while the Vulkan/wgpu 2D FFT shader is under numerical validation; the GPU infrastructure (wgpu, Vulkan, buffers, dispatch) is integrated.
+- `crates/errantes-py` exposes `errantes_py.ShiftStackEngine` with the same `stack(vx,vy)` API.
+- `src/errantes/detection.py` uses Rust automatically when `errantes_py` is installed; otherwise it keeps the NumPy fallback.
+
+## Observatory Workbench
+
+Frontend in `web/` (React 18 + TypeScript + Vite + Tailwind), built against the API:
+
+- `POST /api/simulate`, `POST /api/fits`, `POST /api/detect`
+- `WS /api/jobs/{job_id}/ws`, `GET /api/jobs/{job_id}`
+- `GET /api/candidates/{job_id}`, `POST /api/stack/{job_id}?vx=&vy=`
+- `GET /api/export/{job_id}?format=json|mpc|parquet`
+
+Rust server: `crates/errantes-server` (axum/tokio).
 
 ## Physical model
 

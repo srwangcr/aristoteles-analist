@@ -1,0 +1,16 @@
+[package]
+name = "errantes-py"
+description = "PyO3 bindings for the errantes Rust core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "errantes_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+errantes-core = { workspace = true }
+pyo3 = { workspace = true, features = ["extension-module"] }
+numpy = { workspace = true }
+serde_json = { workspace = true }

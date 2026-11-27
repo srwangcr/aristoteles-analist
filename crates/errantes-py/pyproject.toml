@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "errantes-py"
+version = "0.2.0"
+description = "PyO3 bindings for the errantes Rust compute core"
+requires-python = ">=3.12"
+
+[tool.maturin]
+module-name = "errantes_py"
+features = ["pyo3/extension-module"]

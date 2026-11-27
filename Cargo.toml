@@ -1,0 +1,20 @@
+[workspace]
+members = [
+  "crates/errantes-core",
+  "crates/errantes-py",
+  "crates/errantes-server",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+authors = ["Observatory Workbench contributors"]
+
+[workspace.dependencies]
+errantes-core = { path = "crates/errantes-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+numpy = "0.30"
+pyo3 = "0.30"

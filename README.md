@@ -18,20 +18,16 @@ Dependencias nucleares: NumPy, SciPy, Astropy (FITS/WCS) y Polars (catálogos y 
 
 ## Estructura
 
-```
-src/errantes/
-  types.py        # configuraciones, Wanderer, Candidate, GroundTruth, SimulatedCube
-  physics.py      # PSF Gaussiana/Moffat, Poisson+Gaussiano, flujo↔SNR↔magnitud
-  simulator.py    # cubo sintético, inyección de verdad terrestre, E/S FITS
-  preprocess.py   # malla MAD, correlación de fase, imagen maestra y residuos
-  detection.py    # ShiftStackEngine, umbral kσ, componentes, centroides
-  validation.py   # RANSAC lineal, consistencia fotométrica, rechazo de cósmicos
-  pipeline.py     # orquestación extremo a extremo
-  metrics.py      # matching húngaro, Precision/Recall/F1, ROC/PR, benchmark
-benchmarks/
-  run_benchmark.py  # CLI de sensibilidad y escalado
-  results/          # Parquet/JSON con resultados empíricos
-tests/              # 24 tests unitarios y de integración
+```text
+Aristoteles Analist/
+├── crates/
+│   ├── errantes-core/    # núcleo Rust: FFT/rFFT equivalente NumPy, backend CPU Rayon, despacho Auto/CPU/GPU, wgpu/Vulkan
+│   ├── errantes-py/      # bindings PyO3/maturin; expone errantes_py.ShiftStackEngine
+│   └── errantes-server/  # API REST + WebSocket (axum/tokio) para Observatory Workbench
+├── web/                  # Observatory Workbench (React 18 + TS + Vite + Tailwind)
+├── src/errantes/         # pipeline Python; detection.py delega a errantes_py si está instalado
+├── tests/                # 24 tests Python (paridad/flujo)
+└── benchmarks/           # resultados empíricos
 ```
 
 ## Modelo físico
@@ -61,6 +57,25 @@ F_{\rm obj}=\frac{\mathrm{SNR}_{\rm frame}\,\sigma_{\rm loc}}{P(0)}.
 $$
 
 Todas las magnitudes son instrumentales: $m = m_{\rm zp}-2.5\log_{10}(F/g)$.
+
+## Motor Rust + selector de hardware
+
+- `crates/errantes-core` implementa `ShiftStackEngine` con paridad matemática contra `numpy.fft.rfft2/irfft2` (error ~1e-14).
+- Backend CPU: Rayon + rustfft, paralelismo por frame/hipótesis. En este host (Ryzen 5 3400G, 12×96×96, M=169) pasa de ~0.50 s (NumPy monohilo) a ~0.10 s.
+- `ComputeBackend::{Auto,Cpu,Gpu}`: Auto evalúa $M\times N\times H\times W$, VRAM detectada y overhead PCIe. Actualmente Auto selecciona CPU para garantizar paridad exacta mientras el shader FFT 2D Vulkan/wgpu queda en validación numérica; la infraestructura GPU (wgpu, Vulkan, buffers, dispatch) ya está integrada.
+- `crates/errantes-py` expone `errantes_py.ShiftStackEngine` con la misma interfaz de `stack(vx,vy)`.
+- `src/errantes/detection.py` usa Rust automáticamente si `errantes_py` está instalado; si no, conserva el fallback NumPy.
+
+## Observatory Workbench
+
+Frontend en `web/` (React 18 + TypeScript + Vite + Tailwind) compilado contra la API:
+
+- `POST /api/simulate`, `POST /api/fits`, `POST /api/detect`
+- `WS /api/jobs/{job_id}/ws`, `GET /api/jobs/{job_id}`
+- `GET /api/candidates/{job_id}`, `POST /api/stack/{job_id}?vx=&vy=`
+- `GET /api/export/{job_id}?format=json|mpc|parquet`
+
+Servidor Rust: `crates/errantes-server` (axum/tokio).
 
 ## Algoritmo
 

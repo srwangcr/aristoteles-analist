@@ -186,6 +186,7 @@ class PipelineConfig:
     max_cosmic_fraction: float = 0.55
     max_photometric_cv: float = 0.65
     min_detection_frames: int = 3
+    backend: str = "auto"  # auto | cpu | gpu
 
     @property
     def velocities(self) -> np.ndarray:

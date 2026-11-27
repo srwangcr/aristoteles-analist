@@ -1,0 +1,18 @@
+[package]
+name = "errantes-server"
+description = "REST/WebSocket server for the Observatory Workbench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+errantes-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+axum = { version = "0.8", features = ["ws", "multipart", "macros"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

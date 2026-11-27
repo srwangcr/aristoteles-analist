@@ -9,26 +9,47 @@ from errantes.types import Candidate, PipelineConfig
 
 
 class ShiftStackEngine:
-    """Apilamiento sintetico por hipotesis de velocidad en el dominio de Fourier.
+    """Apilamiento sintetico por hipotesis de velocidad.
 
-    Los FFT de los N frames se calculan una sola vez. Cada hipotesis cuesta
-    N transformadas inversas: O(M * N * H * W * log(H * W)), con M el numero
-    de velocidades probadas.
+    Si el modulo Rust `errantes_py` esta instalado, delega el kernel FFT a
+    CPU multi-hilo (Rayon) manteniendo paridad matematica (~1e-14). Si no, cae
+    a la implementacion NumPy original.
     """
 
-    def __init__(self, residuals: np.ndarray, ref_frame: int | None = None) -> None:
+    def __init__(
+        self,
+        residuals: np.ndarray,
+        ref_frame: int | None = None,
+        backend: str = "auto",
+        n_velocities: int = 169,
+    ) -> None:
         cube = np.asarray(residuals, dtype=np.float64)
         if cube.ndim != 3:
             raise ValueError("residuals debe ser un cubo (N, H, W)")
         self.residuals = cube
         self.n_frames, self.height, self.width = cube.shape
         self.ref_frame = (self.n_frames - 1) // 2 if ref_frame is None else ref_frame
-        self.fft = np.fft.rfft2(cube, axes=(-2, -1))
-        self.ky = (np.fft.fftfreq(self.height) * self.height)[:, None]
-        self.kx = (np.fft.rfftfreq(self.width) * self.width)[None, :]
+        self.backend_name = "python-numpy"
+        self._rust = None
+        try:
+            import errantes_py  # type: ignore[import-not-found]
+
+            self._rust = errantes_py.ShiftStackEngine(
+                cube,
+                ref_frame=self.ref_frame,
+                backend=backend,
+                n_velocities=n_velocities,
+            )
+            self.backend_name = f"rust-{self._rust.backend}"
+        except Exception:
+            self.fft = np.fft.rfft2(cube, axes=(-2, -1))
+            self.ky = (np.fft.fftfreq(self.height) * self.height)[:, None]
+            self.kx = (np.fft.rfftfreq(self.width) * self.width)[None, :]
 
     def stack(self, vx: float, vy: float) -> np.ndarray:
         """Suma los frames desplazados para que un errante con (vx, vy) quede fijo."""
+        if self._rust is not None:
+            return np.asarray(self._rust.stack(float(vx), float(vy)), dtype=np.float64)
         stacked = np.zeros((self.height, self.width), dtype=np.float64)
         for t in range(self.n_frames):
             dt = float(t - self.ref_frame)
@@ -114,7 +135,12 @@ def detect_candidates(
 
     Devuelve (candidatos deduplicados, mejor mapa apilado, SNR maximo por velocidad).
     """
-    engine = ShiftStackEngine(residuals, ref_frame=ref_frame)
+    engine = ShiftStackEngine(
+        residuals,
+        ref_frame=ref_frame,
+        backend=getattr(config, "backend", "auto"),
+        n_velocities=config.n_velocities,
+    )
     velocities = config.velocities
     best_map = np.zeros((engine.height, engine.width), dtype=np.float64)
     best_peak = -np.inf

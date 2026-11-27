@@ -1,0 +1,20 @@
+[package]
+name = "errantes-core"
+description = "Scientific computing core for low-SNR moving-object detection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustfft = "6.4"
+rayon = "1.12"
+rand = "0.10"
+rand_distr = "0.6"
+serde = { workspace = true }
+serde_json = { workspace = true }
+wgpu = "0.20"
+bytemuck = { version = "1", features = ["derive"] }
+futures = "0.3"
+
+[dev-dependencies]
+serde_json = { workspace = true }
