@@ -84,27 +84,30 @@ pub fn choose_backend(
         ComputeBackend::Auto => {
             // El kernel GPU Vulkan está integrado pero su FFT 2D sigue en
             // validación numérica; Auto usa CPU Rayon para garantizar paridad.
-            let _ = (gpu_available, work, required, available, estimated_gpu_s, estimated_cpu_s);
             ComputeBackend::Cpu
         }
     };
-    let reason = match backend {
-        ComputeBackend::Cpu if !gpu_available => "sin adaptador Vulkan; CPU Rayon".to_string(),
-        ComputeBackend::Cpu if work < 20_000 => "cubo pequeño; el PCIe domina".to_string(),
-        ComputeBackend::Cpu if available > 0 && required > available * 8 / 10 => {
+    let reason = match (requested, backend) {
+        (_, ComputeBackend::Cpu) if !gpu_available && requested != ComputeBackend::Cpu => {
+            "sin adaptador Vulkan; CPU Rayon".to_string()
+        }
+        (_, ComputeBackend::Cpu) if work < 20_000 => "cubo pequeño; el PCIe domina".to_string(),
+        (_, ComputeBackend::Cpu) if available > 0 && required > available * 8 / 10 => {
             "VRAM insuficiente".to_string()
         }
-        ComputeBackend::Cpu => format!(
-            "CPU más rápida estimada ({:.3}s vs {:.3}s GPU)",
+        (ComputeBackend::Auto, ComputeBackend::Cpu) => format!(
+            "Auto: CPU Rayon por paridad exacta (shader FFT GPU en validación; est. GPU {:.3}s vs CPU {:.3}s, {} MB VRAM)",
+            estimated_gpu_s, estimated_cpu_s, required / (1024 * 1024)
+        ),
+        (_, ComputeBackend::Cpu) => format!(
+            "CPU seleccionada ({:.3}s est. CPU vs {:.3}s est. GPU)",
             estimated_cpu_s, estimated_gpu_s
         ),
-        ComputeBackend::Gpu => format!(
-            "GPU seleccionada ({:.3}s vs {:.3}s CPU, {} MB requeridos)",
-            estimated_gpu_s,
-            estimated_cpu_s,
-            required / (1024 * 1024)
+        (_, ComputeBackend::Gpu) => format!(
+            "GPU seleccionada ({:.3}s vs {:.3}s CPU, {} MB requeridos; shader en validación)",
+            estimated_gpu_s, estimated_cpu_s, required / (1024 * 1024)
         ),
-        ComputeBackend::Auto => unreachable!(),
+        (_, ComputeBackend::Auto) => unreachable!(),
     };
     BackendDecision {
         backend,

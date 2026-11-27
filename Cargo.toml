@@ -10,7 +10,6 @@ resolver = "2"
 version = "0.2.0"
 edition = "2021"
 license = "MIT"
-authors = ["Observatory Workbench contributors"]
 
 [workspace.dependencies]
 errantes-core = { path = "crates/errantes-core" }

@@ -5,10 +5,11 @@ use std::time::Instant;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State, WebSocketUpgrade};
 use axum::http::{header, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use errantes_core::config::{PipelineConfig, SimulatorConfig, WandererSpec};
+use errantes_core::detect_candidates_with_progress;
 use errantes_core::{ComputeBackend, ShiftStackEngine};
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -28,7 +29,7 @@ struct CubeData {
     height: usize,
     width: usize,
     frames: Vec<f64>,
-    truth: Vec<TruthRow>,
+    _truth: Vec<TruthRow>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -63,6 +64,8 @@ struct JobState {
     elapsed_s: Option<f64>,
     cube_id: String,
     candidates: Vec<CandidateRow>,
+    /// Cubo saneado usado por la detección, reutilizado por `/api/stack`.
+    cleaned: Option<Vec<f64>>,
     tx: broadcast::Sender<String>,
 }
 
@@ -83,6 +86,18 @@ struct DetectReq {
     velocity_max: Option<f64>,
     velocity_step: Option<f64>,
     detection_sigma: Option<f64>,
+    /// Velocidad mínima (px/frame); 0.08 por defecto.
+    v_min: Option<f64>,
+    /// Radio de NMS conjunta en (x, y, vx, vy), en píxeles.
+    r_nms: Option<f64>,
+    /// Umbral MAD para el máscara de estrellas estacionarias.
+    star_sigma: Option<f64>,
+    /// Radio de dilatación del halo estelar.
+    star_mask_radius: Option<usize>,
+    /// Contraste mínimo del núcleo estelar (evita enmascarar fuentes lentas).
+    star_core_sigma: Option<f64>,
+    /// Activar/desactivar la sustracción de la mediana temporal.
+    temporal_median: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -129,7 +144,7 @@ async fn simulate(State(state): State<AppState>, Json(req): Json<SimulateReq>) -
     let (frames, truth) = simulate_frames(&cfg, &wspec);
     let cube_id = Uuid::new_v4().to_string();
     state.cubes.lock().unwrap().insert(cube_id.clone(), CubeData {
-        n_frames: cfg.n_frames, height: cfg.height, width: cfg.width, frames, truth: truth.clone(),
+        n_frames: cfg.n_frames, height: cfg.height, width: cfg.width, frames, _truth: truth.clone(),
     });
     Json(serde_json::json!({"cube_id": cube_id, "truth": truth}))
 }
@@ -187,7 +202,7 @@ async fn upload_fits(State(state): State<AppState>, body: Bytes) -> impl IntoRes
     match parse_fits_cube(&body) {
         Ok((n_frames, height, width, frames)) => {
             let cube_id = Uuid::new_v4().to_string();
-            state.cubes.lock().unwrap().insert(cube_id.clone(), CubeData { n_frames, height, width, frames, truth: vec![] });
+            state.cubes.lock().unwrap().insert(cube_id.clone(), CubeData { n_frames, height, width, frames, _truth: vec![] });
             Json(serde_json::json!({"cube_id":cube_id,"frames":n_frames,"height":height,"width":width})).into_response()
         }
         Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
@@ -196,30 +211,10 @@ async fn upload_fits(State(state): State<AppState>, body: Bytes) -> impl IntoRes
 
 fn parse_fits_cube(bytes: &[u8]) -> Result<(usize, usize, usize, Vec<f64>), String> {
     if bytes.len() < 2880 || &bytes[0..6] != b"SIMPLE" { return Err("FITS inválido".into()); }
-    let mut offset = 0usize;
-    let mut bitpix = 0i32; let mut naxis = 0usize; let mut dims: Vec<usize> = vec![];
-    loop {
-        if offset + 2880 > bytes.len() { return Err("FITS truncado".into()); }
-        let block = &bytes[offset..offset+2880];
-        offset += 2880;
-        for card in block.chunks_exact(80) {
-            let key = std::str::from_utf8(&card[0..8]).unwrap_or("").trim();
-            let val = std::str::from_utf8(&card[10..30]).unwrap_or("").trim().trim_matches('\'').trim();
-            match key {
-                "BITPIX" => bitpix = val.parse().unwrap_or(0),
-                "NAXIS" => naxis = val.parse().unwrap_or(0),
-                k if k.starts_with("NAXIS") => {
-                    if let Ok(n) = k[5..].parse::<usize>() { if n>=1 { if dims.len()<n { dims.resize(n,1); } dims[n-1]=val.parse().unwrap_or(1); } }
-                }
-                "END" => { break; }
-                _ => {}
-            }
-        }
-        if naxis == 0 || !dims.is_empty() { break; }
-    }
-    // Handle END found inside block
-    // Re-scan for END properly
-    let mut offset2 = 0usize; bitpix=0; naxis=0; dims.clear();
+    let mut offset2 = 0usize;
+    let mut bitpix = 0i32;
+    let mut naxis = 0usize;
+    let mut dims: Vec<usize> = vec![];
     'outer: loop {
         if offset2 + 2880 > bytes.len() { return Err("FITS truncado".into()); }
         let block = &bytes[offset2..offset2+2880]; offset2 += 2880;
@@ -269,7 +264,7 @@ async fn detect(State(state): State<AppState>, Json(req): Json<DetectReq>) -> im
     let (tx, _) = broadcast::channel(64);
     state.jobs.lock().unwrap().insert(job_id.clone(), JobState {
         status: "running".into(), progress: 0.0, message: "iniciando".into(), elapsed_s: None,
-        cube_id: req.cube_id.clone(), candidates: vec![], tx: tx.clone(),
+        cube_id: req.cube_id.clone(), candidates: vec![], cleaned: None, tx: tx.clone(),
     });
     let jobs = state.jobs.clone();
     let jid = job_id.clone();
@@ -283,52 +278,52 @@ async fn detect(State(state): State<AppState>, Json(req): Json<DetectReq>) -> im
         if let Some(v) = req.velocity_max { cfg.velocity_max = v; }
         if let Some(v) = req.velocity_step { cfg.velocity_step = v; }
         if let Some(v) = req.detection_sigma { cfg.detection_sigma = v; }
-        let velocities = cfg.velocities();
-        let mut engine = match ShiftStackEngine::new(cube.frames.clone(), cube.n_frames, cube.height, cube.width, None, cfg.backend, velocities.len()) {
-            Ok(e) => e,
+        if let Some(v) = req.v_min { cfg.v_min = v.max(0.0); }
+        if let Some(v) = req.r_nms { cfg.r_nms = v.max(0.0); }
+        if let Some(v) = req.star_sigma { cfg.star_sigma = v.max(0.0); }
+        if let Some(v) = req.star_mask_radius { cfg.star_mask_radius = v; }
+        if let Some(v) = req.star_core_sigma { cfg.star_core_sigma = v.max(0.0); }
+        if let Some(v) = req.temporal_median { cfg.temporal_median = v; }
+
+        let progress = |p: f64| {
+            let _ = tx.send(serde_json::json!({"type":"progress","value":p,"message":"barrido de velocidades"}).to_string());
+            if let Some(job) = jobs.lock().unwrap().get_mut(&jid) {
+                job.progress = p;
+                job.message = "barrido de velocidades".into();
+            }
+        };
+        let result = detect_candidates_with_progress(
+            &cube.frames, cube.n_frames, cube.height, cube.width, &cfg, None, &progress,
+        );
+        let result = match result {
+            Ok(r) => r,
             Err(e) => {
                 let _ = tx.send(serde_json::json!({"type":"error","message":e}).to_string());
                 if let Some(job) = jobs.lock().unwrap().get_mut(&jid) { job.status="error".into(); job.message=e; }
                 return;
             }
         };
-        let mut best: Vec<CandidateRow> = vec![];
-        for (i, (vx, vy)) in velocities.iter().enumerate() {
-            if let Ok(stack) = engine.stack(*vx, *vy) {
-                let sigma = robust_sigma(&stack);
-                let thr = cfg.detection_sigma * sigma;
-                for (idx, &v) in stack.iter().enumerate() {
-                    if v > thr {
-                        let y = (idx / cube.width) as f64; let x = (idx % cube.width) as f64;
-                        best.push(CandidateRow { x,y,vx:*vx,vy:*vy,snr:v/sigma.max(1e-9),stacked_flux:v,peak:v,track_rms:0.0,photometric_cv:0.0,cosmic_fraction:0.0 });
-                    }
-                }
-            }
-            if i % 8 == 0 {
-                let p = i as f64 / velocities.len().max(1) as f64;
-                let _ = tx.send(serde_json::json!({"type":"progress","value":p,"message":format!("velocidad {}/{}",i,velocities.len())}).to_string());
-                if let Some(job) = jobs.lock().unwrap().get_mut(&jid) { job.progress=p; job.message=format!("{}/{}",i,velocities.len()); }
-            }
-        }
-        best.sort_by(|a,b| b.snr.partial_cmp(&a.snr).unwrap());
-        best.truncate(200);
+        let best: Vec<CandidateRow> = result.candidates.iter().map(|c| CandidateRow {
+            x: c.x, y: c.y, vx: c.vx, vy: c.vy, snr: c.snr,
+            stacked_flux: c.stacked_flux, peak: c.peak,
+            track_rms: finite_or_zero(c.track_residual_rms),
+            photometric_cv: finite_or_zero(c.photometric_cv),
+            cosmic_fraction: finite_or_zero(c.cosmic_fraction),
+        }).collect();
+        let cleaned = result.processed_frames;
         let elapsed = start.elapsed().as_secs_f64();
         let _ = tx.send(serde_json::json!({"type":"done","candidates":best.len(),"elapsed_s":elapsed}).to_string());
         if let Some(job) = jobs.lock().unwrap().get_mut(&jid) {
-            job.status="done".into(); job.progress=1.0; job.message="completado".into(); job.elapsed_s=Some(elapsed); job.candidates=best;
+            job.status="done".into(); job.progress=1.0; job.message="completado".into();
+            job.elapsed_s=Some(elapsed); job.candidates=best; job.cleaned=Some(cleaned);
         }
     });
     Json(serde_json::json!({"job_id": job_id})).into_response()
 }
 
-fn robust_sigma(data: &[f64]) -> f64 {
-    let mut v: Vec<f64> = data.iter().copied().filter(|x| x.is_finite()).collect();
-    if v.is_empty() { return 1.0; }
-    v.sort_by(|a,b| a.partial_cmp(b).unwrap());
-    let med = v[v.len()/2];
-    let mut dev: Vec<f64> = v.iter().map(|x| (x-med).abs()).collect();
-    dev.sort_by(|a,b| a.partial_cmp(b).unwrap());
-    (1.4826 * dev[dev.len()/2]).max(1e-6)
+/// `serde_json` no serializa NaN/Inf; el catálogo siempre expone números finitos.
+fn finite_or_zero(value: f64) -> f64 {
+    if value.is_finite() { value } else { 0.0 }
 }
 
 async fn job_status(State(state): State<AppState>, Path(job_id): Path<String>) -> impl IntoResponse {
@@ -358,16 +353,18 @@ async fn candidates(State(state): State<AppState>, Path(job_id): Path<String>, Q
 }
 
 async fn stack_map(State(state): State<AppState>, Path(job_id): Path<String>, Query(q): Query<StackQuery>) -> impl IntoResponse {
-    let (cube, backend) = {
+    let (cube, cleaned, backend) = {
         let jobs = state.jobs.lock().unwrap();
         let Some(job) = jobs.get(&job_id) else { return (StatusCode::NOT_FOUND, "job no encontrado").into_response(); };
         let cube_id = job.cube_id.clone();
+        let cleaned = job.cleaned.clone();
         drop(jobs);
         let cubes = state.cubes.lock().unwrap();
-        (cubes.get(&cube_id).cloned(), ComputeBackend::Auto)
+        (cubes.get(&cube_id).cloned(), cleaned, ComputeBackend::Auto)
     };
     let Some(cube) = cube else { return (StatusCode::NOT_FOUND, "cubo no encontrado").into_response(); };
-    let mut engine = match ShiftStackEngine::new(cube.frames, cube.n_frames, cube.height, cube.width, None, backend, 1) {
+    let frames = cleaned.unwrap_or_else(|| cube.frames.clone());
+    let mut engine = match ShiftStackEngine::new(frames, cube.n_frames, cube.height, cube.width, None, backend, 1) {
         Ok(e) => e, Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     };
     match engine.stack(q.vx, q.vy) {

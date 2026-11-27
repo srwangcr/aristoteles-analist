@@ -120,11 +120,22 @@ def validate_candidates(
             continue
         rms_x = float(np.sqrt(np.mean((xv[good] - (x0 + vx * tv[good])) ** 2)))
         rms_y = float(np.sqrt(np.mean((yv[good] - (y0 + vy * tv[good])) ** 2)))
+        # RMS respecto a la recta hipotética (x0 + vx*t, y0 + vy*t), no
+        # respecto a un ajuste libre: mide la calidad de la hipótesis.
+        dx = xv[good] - (candidate.x + candidate.vx * tv[good])
+        dy = yv[good] - (candidate.y + candidate.vy * tv[good])
+        predicted_rms_x = float(np.sqrt(np.mean(dx**2)))
+        predicted_rms_y = float(np.sqrt(np.mean(dy**2)))
+        predicted_rms = float(np.sqrt(np.mean(dx**2 + dy**2)))
         positive = np.clip(flux_array[valid_points], 0.0, None)
         total_flux = float(positive.sum())
         if total_flux <= 0:
             continue
-        cosmic_fraction = float(positive.max() / total_flux)
+        median_flux = float(np.median(positive))
+        mad = float(1.4826 * np.median(np.abs(positive - median_flux)))
+        if mad <= 1e-9:
+            mad = float(1.4826 * np.std(positive)) or 1e-6
+        cosmic_fraction = float(np.mean(positive > median_flux + 4.0 * mad))
         mean_flux = float(positive.mean())
         photometric_cv = float(np.std(positive) / mean_flux) if mean_flux > 0 else np.inf
         n_detected = int((positive > 0.15 * positive.max()).sum())
@@ -148,9 +159,9 @@ def validate_candidates(
                 n_pixels=candidate.n_pixels,
                 ref_frame=reference,
                 track_fluxes=tuple(float(f) for f in flux_array),
-                track_residual_rms=float(np.sqrt((rms_x**2 + rms_y**2) / 2.0)),
-                track_rms_x=rms_x,
-                track_rms_y=rms_y,
+                track_residual_rms=predicted_rms,
+                track_rms_x=predicted_rms_x,
+                track_rms_y=predicted_rms_y,
                 photometric_cv=photometric_cv,
                 cosmic_fraction=cosmic_fraction,
                 velocity_index=candidate.velocity_index,

@@ -115,7 +115,11 @@ def extract_candidates(
 
 
 def deduplicate(candidates: list[Candidate], radius: float) -> list[Candidate]:
-    """Conserva el candidato de mayor SNR dentro de un radio dado."""
+    """NMS conjunta (x, y, vx, vy): una sola hipótesis por vecindad espacial.
+
+    Las detecciones se ordenan por SNR y se conserva únicamente la hipótesis
+    de velocidad del máximo dentro de ``radius`` píxeles del frame de referencia.
+    """
     kept: list[Candidate] = []
     for candidate in sorted(candidates, key=lambda c: c.snr, reverse=True):
         if any(
@@ -135,13 +139,14 @@ def detect_candidates(
 
     Devuelve (candidatos deduplicados, mejor mapa apilado, SNR maximo por velocidad).
     """
+    # Filtro de velocidad mínima: los vectores (~0, ~0) son residuos estelares.
+    velocities = config.valid_velocities
     engine = ShiftStackEngine(
         residuals,
         ref_frame=ref_frame,
         backend=getattr(config, "backend", "auto"),
-        n_velocities=config.n_velocities,
+        n_velocities=len(velocities),
     )
-    velocities = config.velocities
     best_map = np.zeros((engine.height, engine.width), dtype=np.float64)
     best_peak = -np.inf
     snr_by_velocity = np.zeros(len(velocities), dtype=np.float64)
@@ -158,5 +163,5 @@ def detect_candidates(
             all_candidates.append(
                 Candidate(**{**candidate.__dict__, "ref_frame": engine.ref_frame})
             )
-    detected = deduplicate(all_candidates, config.dedup_radius)
+    detected = deduplicate(all_candidates, config.r_nms)
     return detected, best_map, snr_by_velocity

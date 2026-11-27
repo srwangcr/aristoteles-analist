@@ -148,6 +148,24 @@ pub struct PipelineConfig {
     pub max_photometric_cv: f64,
     pub min_detection_frames: usize,
     pub backend: ComputeBackend,
+    /// Velocidad mínima aceptada (px/frame). Hipótesis con
+    /// `hypot(vx, vy) < v_min` se descartan: son residuos de estrellas.
+    pub v_min: f64,
+    /// Radio de supresión de no-máximos conjunta en (x, y, vx, vy), en píxeles.
+    pub r_nms: f64,
+    /// Umbral robusto (en MAD) para enmascarar estrellas en la mediana temporal.
+    pub star_sigma: f64,
+    /// Radio de dilatación de la máscara de estrellas, en píxeles.
+    pub star_mask_radius: usize,
+    /// Contraste mínimo (en MAD) del núcleo en todos los frames: evita
+    /// enmascarar fuentes lentas que también elevan la mediana temporal.
+    pub star_core_sigma: f64, // 100 por defecto: núcleos muy por encima del cielo
+    /// Restar la mediana temporal por píxel antes del apilamiento.
+    pub temporal_median: bool,
+    /// Radio de la apertura usada para los diagnósticos de trayectoria (5x5 = 2.5).
+    pub diagnostic_radius: f64,
+    /// Tope de candidatos devueltos al catálogo tras NMS.
+    pub max_candidates: usize,
 }
 
 impl Default for PipelineConfig {
@@ -172,11 +190,20 @@ impl Default for PipelineConfig {
             max_photometric_cv: 0.65,
             min_detection_frames: 3,
             backend: ComputeBackend::Auto,
+            v_min: 0.08,
+            r_nms: 5.0,
+            star_sigma: 5.0,
+            star_mask_radius: 3,
+            star_core_sigma: 100.0,
+            temporal_median: true,
+            diagnostic_radius: 2.5,
+            max_candidates: 200,
         }
     }
 }
 
 impl PipelineConfig {
+    /// Grilla completa de velocidades (incluye el vector estacionario).
     pub fn velocities(&self) -> Vec<(f64, f64)> {
         let mut axis = Vec::new();
         let steps = (2.0 * self.velocity_max / self.velocity_step).round() as usize + 1;
@@ -195,5 +222,17 @@ impl PipelineConfig {
     pub fn n_velocities(&self) -> usize {
         let axis = (2.0 * self.velocity_max / self.velocity_step).round() as usize + 1;
         axis * axis
+    }
+
+    /// Grilla efectiva: elimina hipótesis estacionarias o cuasi-estacionarias.
+    pub fn velocity_hypotheses(&self) -> Vec<(f64, f64)> {
+        self.velocities()
+            .into_iter()
+            .filter(|&(vx, vy)| vx.hypot(vy) >= self.v_min)
+            .collect()
+    }
+
+    pub fn n_velocity_hypotheses(&self) -> usize {
+        self.velocity_hypotheses().len()
     }
 }

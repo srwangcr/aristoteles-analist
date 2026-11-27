@@ -187,6 +187,13 @@ class PipelineConfig:
     max_photometric_cv: float = 0.65
     min_detection_frames: int = 3
     backend: str = "auto"  # auto | cpu | gpu
+    v_min: float = 0.08  # px/frame; descarta hipótesis estacionarias
+    r_nms: float = 5.0  # radio de supresión no-máxima conjunta (x, y, vx, vy)
+    star_sigma: float = 5.0  # MAD por encima del cual enmascarar estrellas
+    star_mask_radius: int = 3  # dilatación del halo estelar
+    star_core_sigma: float = 100.0  # contraste del núcleo (protege fuentes lentas)
+    temporal_median: bool = True  # restar mediana temporal antes del stack
+    diagnostic_radius: float = 2.5  # 5x5
 
     @property
     def velocities(self) -> np.ndarray:
@@ -196,6 +203,12 @@ class PipelineConfig:
         )
         gx, gy = np.meshgrid(axis, axis)
         return np.column_stack((gx.ravel(), gy.ravel()))
+
+    @property
+    def valid_velocities(self) -> np.ndarray:
+        """Grilla de velocidades sin hipótesis estacionarias (`v_min`)."""
+        grid = self.velocities
+        return grid[np.hypot(grid[:, 0], grid[:, 1]) >= self.v_min]
 
     @property
     def n_velocities(self) -> int:

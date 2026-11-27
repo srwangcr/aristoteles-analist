@@ -318,7 +318,7 @@ impl GpuStacker {
         };
 
         let fft_pipeline = make_pipeline("fft-radix2", FFT_WGSL);
-        let pipeline_layout = fft_pipeline.get_bind_group_layout(0);
+        let _pipeline_layout = fft_pipeline.get_bind_group_layout(0);
 
         let make_three_buffer_pipeline = |label: &str, src: &str| -> wgpu::ComputePipeline {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -573,7 +573,7 @@ impl GpuStacker {
         &self,
         buffer: &wgpu::Buffer,
         params: &[wgpu::Buffer],
-        single: bool,
+        _single: bool,
     ) -> Vec<wgpu::BindGroup> {
         let layout = self.fft_pipeline.get_bind_group_layout(0);
         params
